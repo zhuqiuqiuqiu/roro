@@ -2,29 +2,39 @@ import math
 from insert import *
 from delete import *
 from evaluate_solution import *
+from layoutevaluator import *
+from solution import Solution
+def alns(initial_solution, max_iter=300):
 
-def alns(initial_solution, evaluator, max_iter=1000):
+    layout = SkylineLayout()
+
     current = initial_solution
-    current.cost = evaluate_solution(current, evaluator)
+    current.cost = evaluate_solution(current, layout)
+
     best = current.deepcopy()
     best.cost = current.cost
-    T = 1000  # 初始温度
+
+    T = 500
+
     for it in range(max_iter):
-        # ---- 破坏 ----
-        destroyed, removed = remove_by_type(current)
-        # ---- 修复 ----
-        candidate = insert_greedy(destroyed, removed, evaluator)
-        candidate.cost = evaluate_solution(candidate, evaluator)
-        # ---- 接受准则（模拟退火）----
+
+        destroyed, removed = destroy(current)
+
+        candidate = repair(destroyed, removed, layout)
+        candidate.cost = evaluate_solution(candidate, layout)
+
         delta = candidate.cost - current.cost
+
         if delta < 0 or random.random() < math.exp(-delta / T):
             current = candidate
-        # 更新最优
+
         if current.cost < best.cost:
             best = current.deepcopy()
             best.cost = current.cost
-        # 降温
-        T *= 0.995
+
+        T *= 0.98
+
         if it % 50 == 0:
             print(f"Iter {it}, Best Cost: {best.cost}")
+
     return best

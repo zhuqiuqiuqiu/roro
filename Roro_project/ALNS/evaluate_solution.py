@@ -5,7 +5,6 @@ def evaluate_solution(solution, evaluator):
         if not feasible:
             cost += 1e6  # penalty
         total_cost += cost
-
     spread_penalty = compute_spread(solution)   #计算分散度
     total_cost += spread_penalty
     return total_cost
