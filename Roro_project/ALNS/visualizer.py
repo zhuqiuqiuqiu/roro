@@ -17,10 +17,14 @@ from matplotlib.patches import Rectangle
 
 # ── 颜色配置 ─────────────────────────────────────────────────────────────────
 VEHICLE_COLORS = {
-    "SUV":   "#4C72B0",   # 蓝
-    "Sedan": "#55A868",   # 绿
-    "Truck": "#C44E52",   # 红
-    "Van":   "#8172B2",   # 紫
+    'SEAL U': '#4C72B0',
+    'G13': '#55A868',
+    'EV3': '#C44E52',
+    'EV ': '#C44E52',
+    'NIRO': '#4C72B0',
+    'PICANTO': '#55A868',
+    'SELTOS': '#4C72B0',
+    'STONIC': '#4C72B0',
 }
 _EXTRA_COLORS = ["#64B5CD", "#E07B54", "#A2B9BC", "#B0C4DE", "#F0C27F"]
 
