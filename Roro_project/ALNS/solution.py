@@ -6,4 +6,6 @@ class Solution:
         self.cost = None
 
     def deepcopy(self):
-        return Solution(copy.deepcopy(self.yards))
+        new_sol = Solution(copy.deepcopy(self.yards))
+        new_sol.cost = self.cost  #
+        return new_sol

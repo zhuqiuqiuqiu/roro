@@ -1,12 +1,16 @@
 import math
 from data import yard_sizes, vehicle_info
+
+
 class SkylineLayout:
     '''
     堆场布局评估器，
     使用Skyline算法评估车辆布局的成本和可行性
     '''
-    def __init__(self):
+    def __init__(self, yard_sizes, vehicle_info):
         self.cache = {}
+        self.yard_sizes = yard_sizes
+        self.vehicle_info = vehicle_info
 
     def encode_key(self, yard_id, vehicles):
         return (yard_id, tuple(sorted(vehicles.items())))
@@ -17,27 +21,32 @@ class SkylineLayout:
         if key in self.cache:
             return self.cache[key]
 
-        cost, feasible = self._layout(yard_sizes[yard_id], vehicles)
+        cost, feasible, placements = self._layout(
+            self.yard_sizes[yard_id], vehicles
+        )
 
-        self.cache[key] = (cost, feasible)
-        return cost, feasible
+        self.cache[key] = (cost, feasible, placements)
+        return cost, feasible, placements
 
     def _layout(self, yard_size, vehicles):
         W, H = yard_size
 
         rects = []
-        for t, q in vehicles.items():
-            w, h = vehicle_info[t]
-            rects += [(w, h)] * q
 
-        # 按高度排序（关键）
-        rects.sort(key=lambda x: -x[1])
+        # 4/2新增代码: 按实际数量q生成矩形，修复原先忽略车辆数量只生成2个的严重bug
+        for t, q in vehicles.items():
+            w, h = self.vehicle_info[t]
+            for _ in range(q):
+                rects.append((w, h, t))
+
+        #  按面积排序（更稳定）
+        rects.sort(key=lambda x: (-x[0]*x[1], -max(x[0], x[1])))
 
         skyline = [(0, 0, W)]  # (x, y, width)
-
         placements = []
 
-        for rw, rh in rects:
+        for rw, rh, t in rects:
+
             best_y = math.inf
             best_x = None
             best_idx = None
@@ -50,28 +59,55 @@ class SkylineLayout:
                     width_left = rw
                     j = i
 
+                    prev_x = x
+
                     while width_left > 0 and j < len(skyline):
                         sx, sy, sw = skyline[j]
+                        # 检查是否连续
+                        if sx != prev_x:
+                            break
                         max_y = max(max_y, sy)
                         width_left -= sw
+                        prev_x = sx + sw
                         j += 1
 
+                    # ✅ 高度限制（必须）
                     if width_left <= 0 and max_y + rh <= H:
                         if max_y < best_y:
                             best_y = max_y
                             best_x = x
                             best_idx = i
 
+            # ❗ 放不下 → 不可行
             if best_x is None:
-                return 1e6, False
+                return 1e6, False, []
 
+            # 插入
             self._add_skyline(skyline, best_idx, best_x, best_y, rw, rh)
-            placements.append((rw, rh))
 
-        used_area = sum(w*h for (w, h) in placements)
+            placements.append((best_x, best_y, rw, rh, t))
+
+        # ===== 计算 cost =====
+        used_area = sum(w * h for (_, _, w, h, _) in placements)
         total_area = W * H
 
-        return total_area - used_area, True
+        utilization = used_area / total_area
+
+        # ===== 基础cost（越小越好）=====
+        empty_area = total_area - used_area
+
+        penalty = 0
+
+        # 硬约束：超过95%视为物理不可行
+        if utilization > 0.95:
+            return 1e6, False, []
+        # 4/2新增代码: 降低软约束阈值从0.9→0.85，过高利用率施加惩罚防止极度拥挤
+        elif utilization > 0.85:
+            penalty += (utilization - 0.85) * 5000
+
+        cost = empty_area * 0.5 + penalty
+
+        return cost, True, placements
 
     def _add_skyline(self, skyline, idx, x, y, w, h):
         skyline.insert(idx, (x, y + h, w))
