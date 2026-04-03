@@ -1,4 +1,4 @@
-from evaluate_solution import compute_type_spread
+from evaluate_solution import compute_type_spread, WEIGHTS  # 4/3需求：导入集中化权重参数
 from data import yard_sizes as _yard_sizes, vehicle_info as _vehicle_info  # 4/2新增代码
 import copy
 import random
@@ -11,12 +11,15 @@ import random
 def _compute_balance_delta(solution, target_yard, t, qty):  # 4/2新增代码
     """
     计算将 qty 辆 t 型车插入 target_yard 后，堆场负载均衡惩罚的变化量 (Δbalance)。
-    与 evaluate_solution.compute_balance_penalty 系数保持一致（×10000）。
+    4/3修改：只统计活跃堆场（与 compute_balance_penalty 保持一致）。
     """
     yard_ids = list(solution.yards.keys())
 
     old_utils = []
+    active_mask = []
     for yid in yard_ids:
+        is_active = bool(solution.yards[yid])
+        active_mask.append(is_active)
         W, H = _yard_sizes[yid]
         used = sum(
             _vehicle_info[vt][0] * _vehicle_info[vt][1] * q
@@ -25,20 +28,24 @@ def _compute_balance_delta(solution, target_yard, t, qty):  # 4/2新增代码
         )
         old_utils.append(used / (W * H))
 
+    # 插入后的利用率
     new_utils = list(old_utils)
     idx = yard_ids.index(target_yard)
     W, H = _yard_sizes[target_yard]
     w, h = _vehicle_info[t]
-    # 4/2新增代码: 限制在1.0以内防止浮点越界
     new_utils[idx] = min(1.0, old_utils[idx] + w * h * qty / (W * H))
 
-    def _var(utils):
-        if len(utils) < 2:
-            return 0.0
-        m = sum(utils) / len(utils)
-        return sum((u - m) ** 2 for u in utils) / len(utils)
+    # 4/3需求：只在活跃堆场（或插入后变活跃的堆场）间计算方差
+    new_active = [active_mask[i] or (yard_ids[i] == target_yard) for i in range(len(yard_ids))]
 
-    return (_var(new_utils) - _var(old_utils)) * 10000  # 4/2新增代码: 与evaluate_solution系数一致
+    def _var_active(utils, mask):
+        active_utils = [u for u, m in zip(utils, mask) if m]
+        if len(active_utils) < 2:
+            return 0.0
+        m = sum(active_utils) / len(active_utils)
+        return sum((u - m) ** 2 for u in active_utils) / len(active_utils)
+
+    return (_var_active(new_utils, new_active) - _var_active(old_utils, active_mask)) * WEIGHTS['balance']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,8 +54,7 @@ def _compute_balance_delta(solution, target_yard, t, qty):  # 4/2新增代码
 
 def repair(solution, removed, layout):
     """
-    修复算子（原贪心版本）：将 removed 中的车辆重新分配到最优堆场。
-    已被 repair_regret 取代，此处保留以备对比。
+    修复算子（原贪心版本）：已被 repair_regret 取代，此处保留以备对比。
     """
     new_sol = solution.deepcopy()
     for yard_id_old, t, qty in removed:
@@ -83,23 +89,22 @@ def repair(solution, removed, layout):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4/2新增代码: Regret-2 + 分批插入修复算子
+# 4/3需求：车型集中与少堆场 — 增加亲和度机制
 # ─────────────────────────────────────────────────────────────────────────────
 
 def repair_regret(solution, removed, layout, batch_size=10):  # 4/2新增代码
     """
-    Regret-2 + 分批插入修复算子（替代原贪心 repair）。
+    Regret-2 + 分批插入 + 亲和度机制修复算子。
 
-    核心思路：
-    1. 分批插入 —— 将每批次车辆数限制为 batch_size，避免一次性贪心陷入极端局部最优。
-    2. Regret-2  —— 对每个待插入批次，计算所有堆场的 Δcost；
-                   "后悔值" = 次优cost - 最优cost，后悔值最大的批次优先插入，
-                   防止忽略"错过最佳位置代价极高"的车辆。
-    3. Δcost 综合指标 = Δlayout + Δbalance（均衡惩罚变化量）。
+    Δcost 综合指标 = Δlayout + Δbalance + 亲和度调整
+      - 同类已存在目标堆场：给予 WEIGHTS['affinity_bonus'] 折扣（鼓励集中）
+      - 目标堆场为空：施加 WEIGHTS['empty_penalty'] 惩罚（排斥开新堆场）
+      - 若所有非空堆场均不可行，才允许写入空堆场
     """
     new_sol = solution.deepcopy()
 
     # 4/2新增代码: 将 removed 按 batch_size 拆分为细粒度批次
-    pending = []  # list of (t, qty)
+    pending = []
     for _, t, qty in removed:
         while qty > 0:
             b = min(qty, batch_size)
@@ -107,12 +112,11 @@ def repair_regret(solution, removed, layout, batch_size=10):  # 4/2新增代码
             qty -= b
 
     while pending:
-        best_item_idx = None
-        best_regret = -float('inf')
+        best_item_idx  = None
+        best_regret    = -float('inf')
         best_target_yard = None
 
         for idx, (t, qty) in enumerate(pending):
-            # 4/2新增代码: 对每个候选堆场计算综合 Δcost = Δlayout + Δbalance
             candidates = []
             for yard_id in new_sol.yards:
                 old_types = new_sol.yards[yard_id]
@@ -125,30 +129,39 @@ def repair_regret(solution, removed, layout, batch_size=10):  # 4/2新增代码
                     continue
 
                 delta_layout = new_cost - old_cost
-                # 4/2新增代码: Δbalance 促进均衡分布
-                delta_bal = _compute_balance_delta(new_sol, yard_id, t, qty)
-                delta = delta_layout + delta_bal
+                delta_bal    = _compute_balance_delta(new_sol, yard_id, t, qty)
+
+                # 4/3需求：车型集中与少堆场 — 亲和度调整
+                yard_is_empty     = not bool(old_types)
+                already_has_type  = t in old_types
+                affinity_adj = 0
+                if already_has_type:
+                    affinity_adj -= WEIGHTS['affinity_bonus']  # 4/3需求: 同类吸引，成本折扣
+                elif yard_is_empty:
+                    affinity_adj += WEIGHTS['empty_penalty']   # 4/3需求: 排斥空堆场
+
+                delta = delta_layout + delta_bal + affinity_adj
                 candidates.append((delta, yard_id))
 
             if not candidates:
                 continue
 
             candidates.sort(key=lambda x: x[0])
-            best_cost_val = candidates[0][0]
+            best_cost_val     = candidates[0][0]
             best_yard_for_item = candidates[0][1]
-            # 4/2新增代码: Regret-2 后悔值 = 次优 - 最优
-            second_cost_val = candidates[1][0] if len(candidates) > 1 else best_cost_val + 1e5
-            regret = second_cost_val - best_cost_val
+            second_cost_val   = candidates[1][0] if len(candidates) > 1 else best_cost_val + 1e5
 
+            # 4/2新增代码: 后悔值 = 次优cost - 最优cost
+            regret = second_cost_val - best_cost_val
             if regret > best_regret:
-                best_regret = regret
-                best_item_idx = idx
+                best_regret      = regret
+                best_item_idx    = idx
                 best_target_yard = best_yard_for_item
 
         if best_item_idx is None:
             break
 
-        # 4/2新增代码: 将后悔值最大的批次插入最优堆场
+        # 4/2新增代码: 插入后悔值最大的批次
         t, qty = pending[best_item_idx]
         if best_target_yard is not None:
             new_sol.yards[best_target_yard][t] = \

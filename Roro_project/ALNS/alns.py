@@ -1,5 +1,5 @@
 from insert import repair, repair_regret  # 4/2新增代码: 导入新Regret修复算子
-from delete import destroy, destroy_size, destroy_spread
+from delete import destroy, destroy_size, destroy_spread, destroy_fragmented_types  # 4/3需求：车型集中与少堆场
 from evaluate_solution import evaluate_solution
 from layoutevaluator import SkylineLayout
 import random
@@ -43,11 +43,13 @@ def alns(initial_solution, layout, max_iter=300,
     destroy_ops = [
         lambda sol: destroy(sol, layout),
         lambda sol: destroy_size(sol, layout),
-        lambda sol: destroy_spread(sol, layout)
+        lambda sol: destroy_spread(sol, layout),
+        lambda sol: destroy_fragmented_types(sol, layout),  # 4/3需求：车型集中与少堆场
     ]
     n_ops = len(destroy_ops)
 
     # 4/2新增代码: 自适应权重初始化（各算子初始权重相等）
+    # 4/3需求：新增 destroy_fragmented_types，n_ops 自动扩展为 4
     weights = [1.0] * n_ops
     scores  = [0.0] * n_ops   # 4/2新增代码: 当前周期内的累计得分
     uses    = [0]   * n_ops   # 4/2新增代码: 当前周期内的使用次数

@@ -71,3 +71,46 @@ def destroy_spread(solution, layout, ratio=0.4):
                 removed.append((yard_id, t, types[t]))
                 del types[t]
     return new_sol, removed
+
+
+def destroy_fragmented_types(solution, layout, ratio=0.4):   # 4/3需求：车型集中与少堆场
+    """
+    针对性破坏算子：找出"打散最严重"的车型（分布堆场数最多），
+    将其所有车辆从全部堆场中移出，交由 repair_regret 重新集中插入。
+
+    若当前解中所有车型都只在一个堆场，则退化为普通随机破坏。
+    """
+    new_sol = solution.deepcopy()
+    removed = []
+
+    # 统计每种车型分布的堆场集合
+    type_yards = {}
+    for yard_id, types in new_sol.yards.items():
+        for t in types:
+            type_yards.setdefault(t, set()).add(yard_id)
+
+    if not type_yards:
+        return new_sol, removed
+
+    # 按打散度（堆场数）降序排列
+    type_spread = sorted(type_yards.items(), key=lambda x: -len(x[1]))
+
+    # 选取打散度 > 1 的车型（真正跨堆场）
+    fragmented = [(t, yards) for t, yards in type_spread if len(yards) > 1]
+
+    if not fragmented:
+        # 退化：无打散车型时随机破坏
+        return destroy(solution, layout, ratio=ratio)
+
+    # 选取打散最严重的 max(1, int(len * ratio)) 个车型
+    num_select   = max(1, int(len(fragmented) * ratio))
+    selected_types = {t for t, _ in fragmented[:num_select]}
+
+    # 将所选车型的全部实例从所有堆场移出
+    for yard_id, types in new_sol.yards.items():
+        for t in list(types.keys()):
+            if t in selected_types:
+                removed.append((yard_id, t, types[t]))
+                del types[t]
+
+    return new_sol, removed
